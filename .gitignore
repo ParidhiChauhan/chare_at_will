@@ -1,0 +1,42 @@
+y
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Go
+/bin/
+/pkg/
+*.exe
+*.exe~
+*.test
+*.out
+
+# Env
+.env
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+
+^X
+
+
+
+
+
+
+*.tar.gz
+
