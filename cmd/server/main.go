@@ -4,9 +4,9 @@ import (
 	"log"
 	"net/http"
 
-	"razorpay-charge-at-will/config"
-	"razorpay-charge-at-will/internal/routes"
-	chargeatwill "razorpay-charge-at-will/products/charge_at_will"
+	"razorpay_charge_at_will/config"
+	"razorpay_charge_at_will/internal/routes"
+	chargeatwill "razorpay_charge_at_will/products/charge_at_will"
 )
 
 func main() {

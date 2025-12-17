@@ -1,48 +1,107 @@
 package chargeatwill
 
-
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 )
 
 type Service struct {
-	KeyID     string
-	KeySecret string
+	key    string
+	secret string
 }
 
 func NewService(key, secret string) *Service {
-	return &Service{
-		KeyID:     key,
-		KeySecret: secret,
-	}
+	return &Service{key: key, secret: secret}
 }
 
-func (s *Service) CreateAuthorization() (*http.Response, error) {
-	payload := map[string]interface{}{
-		"amount":   100,
-		"currency": "INR",
-		"method":   "upi",
-		"customer": map[string]string{
-			"email":   "customer@example.com",
-			"contact": "9999999999",
-		},
-		"upi": map[string]interface{}{
-			"flow": "collect",
-		},
+func (s *Service) doRequest(method, url string, body interface{}) ([]byte, error) {
+	var reqBody []byte
+	if body != nil {
+		reqBody, _ = json.Marshal(body)
 	}
 
-	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest(method, url, bytes.NewBuffer(reqBody))
+	req.SetBasicAuth(s.key, s.secret)
+	req.Header.Set("Content-Type", "application/json")
 
-	req, err := http.NewRequest("POST", RazorpayAuthURL, bytes.NewBuffer(body))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
-	req.SetBasicAuth(s.KeyID, s.KeySecret)
-	req.Header.Set("Content-Type", "application/json")
+	respBody, _ := io.ReadAll(resp.Body)
 
-	client := &http.Client{}
-	return client.Do(req)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("razorpay API error: %s", respBody)
+	}
+
+	return respBody, nil
+}
+
+/* STEP 1: CREATE CUSTOMER */
+func (s *Service) CreateCustomer(req *AuthorizationRequest) (string, error) {
+	payload := map[string]interface{}{
+		"name":          req.Name,
+		"email":         req.Email,
+		"contact":       req.Contact,
+		"fail_existing": "0",
+		"notes": map[string]string{
+			"note_key_1": "September",
+			"note_key_2": "Make it so.",
+		},
+	}
+
+	resp, err := s.doRequest("POST", RazorpayBaseURL+"/customers", payload)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(resp, &result)
+
+	return result.ID, nil
+}
+
+/* STEP 2: CREATE ORDER (UPI + TOKEN) */
+func (s *Service) CreateOrder(req *AuthorizationRequest, customerID string) (string, error) {
+	payload := map[string]interface{}{
+		"amount":      req.Amount,
+		"currency":    req.Currency,
+		"customer_id": customerID,
+		"method":      "upi",
+
+		// ✅ UNIQUE RECEIPT (FIX)
+		"receipt": fmt.Sprintf("receipt_%d", time.Now().UnixNano()),
+
+		"token": map[string]interface{}{
+			"max_amount":      200000,
+			"expire_at":       2709971120,
+			"frequency":       "as_presented",
+		
+		},
+
+		"notes": map[string]string{
+			"notes_key_1": "Tea, Earl Grey, Hot",
+			"notes_key_2": "Tea, Earl Grey… decaf.",
+		},
+	}
+
+	resp, err := s.doRequest("POST", RazorpayBaseURL+"/orders", payload)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(resp, &result)
+
+	return result.ID, nil
 }
