@@ -1,47 +1,56 @@
 package chargeatwill
 
 import (
-	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 )
 
-/* ---------------- STEP 1 & 2: CUSTOMER + ORDER ---------------- */
-
-func (h *Handler) CreateAuthorization(w http.ResponseWriter, r *http.Request) {
-	var req SetupRequest
-	json.NewDecoder(r.Body).Decode(&req)
-
-	customerID, err := h.service.CreateCustomer(&CreateCustomerRequest{
-		Name:    req.Name,
-		Email:   req.Email,
-		Contact: req.Contact,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	orderID, err := h.service.CreateOrder(customerID, req.Amount)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{
-		"customer_id": customerID,
-		"order_id":    orderID,
-	})
+type Handler struct {
+	service *Service
 }
 
-/* ---------------- STEP 3: AUTHORIZATION PAYMENT (MISSING STEP) ---------------- */
+func NewHandler(service *Service) *Handler {
+	return &Handler{service: service}
+}
 
-func (h *Handler) CreateAuthorizationPayment(w http.ResponseWriter, r *http.Request) {
-	var req AuthorizationPaymentRequest
-	json.NewDecoder(r.Body).Decode(&req)
+/*
+STEP 1:
+Create customer + order
+*/
+func (h *Handler) CreateAuthorization(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-	resp, err := h.service.CreateAuthorizationPayment(req.OrderID)
+	body, _ := io.ReadAll(r.Body)
+
+	resp, err := h.service.CreateCustomerAndOrder(string(body))
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, fmt.Sprintf("order error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(resp)
+}
+
+/*
+STEP 2:
+Create authorization payment (UPI Autopay approval)
+*/
+func (h *Handler) CreateAuthorizationPayment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+
+	resp, err := h.service.CreateAuthorizationPayment(string(body))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("authorization error: %v", err), http.StatusInternalServerError)
 		return
 	}
 

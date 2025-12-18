@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Razorpay UPI Charge-at-Will</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #f7f8fa;
+      display: flex;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background: #020617;
+      color: white;
+      height: 100vh;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .sidebar h2 {
+      font-size: 18px;
+      margin-bottom: 16px;
+    }
+
+    .sidebar h4 {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-top: 20px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .sidebar button {
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 10px;
+      background: #0f172a;
+      color: white;
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .sidebar button:hover {
+      background: #1e293b;
+    }
+
+    .disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Main content */
+    .content {
+      flex: 1;
+      padding: 40px;
+    }
+
+    .box, .ai-box {
+      max-width: 480px;
+      background: white;
+      padding: 25px;
+      border-radius: 8px;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+    }
+
+    .primary {
+      background: #0f4cff;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    pre {
+      background: #f1f5f9;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+
+    .ai-msg {
+      background: #e5e7eb;
+      padding: 8px;
+      margin-bottom: 6px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <h2>Razorpay</h2>
+
+  <h4>Payments</h4>
+  <button class="disabled">💳 Payments (Docs)</button>
+  <button class="disabled">🔁 Subscriptions</button>
+  <button class="disabled">🔗 Payment Links</button>
+  <button class="disabled">✨ Magic Checkout</button>
+
+  <h4>Banking</h4>
+  <button class="disabled">🏦 Smart Collect</button>
+  <button class="disabled">📤 Payouts</button>
+  <button class="disabled">🧾 Route (Split)</button>
+
+  <h4>Lending & Risk</h4>
+  <button class="disabled">💰 Capital</button>
+  <button class="disabled">🛡️ Thirdwatch</button>
+
+  <h4>Advanced</h4>
+  <button onclick="showChargeAtWill()">⚡ Charge-at-Will</button>
+  <button onclick="showAI()">🤖 Razorpay AI</button>
+
+  <p style="font-size:11px; color:#94a3b8; margin-top:20px;">
+    Refer Razorpay Docs for detailed APIs
+  </p>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="content" id="mainContent">
+  <div class="box">
+    <h2>Welcome 👋</h2>
+    <p>Select a Razorpay product from the sidebar.</p>
+    <p style="font-size:13px; color:#64748b">
+     
+    </p>
+  </div>
+</div>
+
+<script>
+let orderId = "";
+let customerId = "";
+let amount = 0;
+
+/* =============================
+   CHARGE AT WILL SCREEN
+============================= */
+function showChargeAtWill() {
+  document.getElementById("mainContent").innerHTML = `
+  <div class="box">
+    <h2>UPI Charge-at-Will</h2>
+
+    <input id="name" placeholder="Name">
+    <input id="email" placeholder="Email">
+    <input id="contact" placeholder="Contact">
+    <input id="amount" placeholder="Amount (₹)">
+
+    <button class="primary" onclick="createMandate()">Create Mandate</button>
+
+    <pre id="step1"></pre>
+
+    <button id="rzp-button1" class="primary" style="display:none">
+      Authorize via UPI
+    </button>
+
+    <pre id="step2"></pre>
+  </div>
+  `;
+}
+
+/* =============================
+   BACKEND CALL
+============================= */
+async function createMandate() {
+  const payload = {
+    name: document.getElementById("name").value,
+    email: document.getElementById("email").value,
+    contact: document.getElementById("contact").value,
+    amount: parseInt(document.getElementById("amount").value),
+    method: "upi"
+  };
+
+  const res = await fetch("http://localhost:8080/charge-at-will/authorize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+
+  document.getElementById("step1").innerText =
+    JSON.stringify(data, null, 2);
+
+  orderId = data.order_id;
+  customerId = data.customer_id;
+  amount = payload.amount;
+
+  if (orderId && customerId) {
+    setupCheckout();
+    document.getElementById("rzp-button1").style.display = "block";
+  }
+}
+
+/* =============================
+   RAZORPAY CHECKOUT
+============================= */
+function setupCheckout() {
+  const options = {
+    key: "rzp_test_Df9PS5NyT01KEo",
+    amount: amount * 100,
+    currency: "INR",
+    order_id: orderId,
+    customer_id: customerId,
+    recurring: "1",
+    name: "Charge-at-Will Demo",
+
+    handler: function (response) {
+      document.getElementById("step2").innerText =
+        "Mandate Authorized ✅\n\n" +
+        JSON.stringify(response, null, 2);
+    }
+  };
+
+  const rzp1 = new Razorpay(options);
+  document.getElementById("rzp-button1").onclick = e => {
+    rzp1.open();
+    e.preventDefault();
+  };
+}
+
+/* =============================
+   RAZORPAY AI
+============================= */
+function showAI() {
+  document.getElementById("mainContent").innerHTML = `
+    <div class="ai-box">
+      <h2>Razorpay AI 🤖</h2>
+
+      <div id="chatWindow" style="height:260px; overflow-y:auto; margin-bottom:10px;">
+        <div class="ai-msg">👋 Hi! Ask me about Razorpay products.</div>
+      </div>
+
+      <input id="userInput" placeholder="Ask something..." />
+      <button class="primary" onclick="sendMessage()">Send</button>
+    </div>
+  `;
+}
+
+function sendMessage() {
+  const input = document.getElementById("userInput");
+  const chat = document.getElementById("chatWindow");
+
+  if (!input.value) return;
+
+  chat.innerHTML += `<div class="ai-msg" style="background:#dcfce7">👤 ${input.value}</div>`;
+
+  let reply = "Please refer Razorpay Docs for detailed API usage.";
+
+  if (input.value.toLowerCase().includes("charge"))
+    reply = "Charge-at-Will allows recurring UPI debits after mandate approval.";
+
+  setTimeout(() => {
+    chat.innerHTML += `<div class="ai-msg">🤖 ${reply}</div>`;
+    chat.scrollTop = chat.scrollHeight;
+  }, 500);
+
+  input.value = "";
+}
+</script>
+
+</body>
+</html>

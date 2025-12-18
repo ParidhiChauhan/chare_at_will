@@ -3,6 +3,7 @@ package chargeatwill
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,95 +16,145 @@ type Service struct {
 }
 
 func NewService(key, secret string) *Service {
-	return &Service{key: key, secret: secret}
+	return &Service{
+		key:    key,
+		secret: secret,
+	}
 }
 
-/* ---------------- CREATE CUSTOMER ---------------- */
+/*
+STEP 1:
+Create Customer + Order (UPI Mandate)
+*/
+func (s *Service) CreateCustomerAndOrder(payload string) ([]byte, error) {
 
-func (s *Service) CreateCustomer(req *CreateCustomerRequest) (string, error) {
-	url := "https://api.razorpay.com/v1/customers"
+	var req map[string]interface{}
+	_ = json.Unmarshal([]byte(payload), &req)
 
-	body, _ := json.Marshal(req)
+	// --------------------
+	// 1️⃣ Create Customer
+	// --------------------
+	customerPayload := map[string]interface{}{
+		"name":          req["name"],
+		"email":         req["email"],
+		"contact":       req["contact"],
+		"fail_existing": "0",
+	}
 
-	httpReq, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	httpReq.SetBasicAuth(s.key, s.secret)
-	httpReq.Header.Set("Content-Type", "application/json")
+	customerBody, _ := json.Marshal(customerPayload)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	customerReq, _ := http.NewRequest(
+		"POST",
+		"https://api.razorpay.com/v1/customers",
+		bytes.NewBuffer(customerBody),
+	)
+
+	customerReq.SetBasicAuth(s.key, s.secret)
+	customerReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	customerResp, err := client.Do(customerReq)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	defer resp.Body.Close()
+	defer customerResp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("customer error: %s", string(respBody))
+	customerRespBody, _ := io.ReadAll(customerResp.Body)
+
+	var customerRespJSON map[string]interface{}
+	_ = json.Unmarshal(customerRespBody, &customerRespJSON)
+
+	if customerResp.StatusCode >= 400 {
+		return nil, errors.New(string(customerRespBody))
 	}
 
-	var result map[string]interface{}
-	json.Unmarshal(respBody, &result)
+	customerID := customerRespJSON["id"].(string)
 
-	return result["id"].(string), nil
-}
 
-/* ---------------- CREATE ORDER ---------------- */
-
-func (s *Service) CreateOrder(customerID string, amount int) (string, error) {
-	url := "https://api.razorpay.com/v1/orders"
-
-	payload := map[string]interface{}{
-		"amount":   amount,
-		"currency": "INR",
+	orderPayload := map[string]interface{}{
+		"amount":      13560, 
+		"currency":    "INR",
 		"customer_id": customerID,
-		"method":   "upi",
-		"receipt":  fmt.Sprintf("receipt_%d", time.Now().Unix()),
+		"method":      "upi",
+		"receipt":     fmt.Sprintf("rcpt_%d", time.Now().Unix()),
 		"token": map[string]interface{}{
-			"max_amount":     200000,
-			"expire_at":      time.Now().AddDate(1, 0, 0).Unix(),
-			"frequency":      "as_presented",
-			"recurring_type": "as_presented",
+			"max_amount":      200000,
+			"expire_at":       time.Now().AddDate(5, 0, 0).Unix(),
+		
+			"recurring_value": 1,
 		},
 	}
 
-	body, _ := json.Marshal(payload)
+	orderBody, _ := json.Marshal(orderPayload)
 
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	req.SetBasicAuth(s.key, s.secret)
-	req.Header.Set("Content-Type", "application/json")
+	orderReq, _ := http.NewRequest(
+		"POST",
+		"https://api.razorpay.com/v1/orders",
+		bytes.NewBuffer(orderBody),
+	)
 
-	resp, err := http.DefaultClient.Do(req)
+	orderReq.SetBasicAuth(s.key, s.secret)
+	orderReq.Header.Set("Content-Type", "application/json")
+
+	orderResp, err := client.Do(orderReq)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	defer resp.Body.Close()
+	defer orderResp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("order error: %s", string(respBody))
+	orderRespBody, _ := io.ReadAll(orderResp.Body)
+
+	if orderResp.StatusCode >= 400 {
+		return nil, errors.New(string(orderRespBody))
 	}
 
-	var result map[string]interface{}
-	json.Unmarshal(respBody, &result)
+	var orderRespJSON map[string]interface{}
+	_ = json.Unmarshal(orderRespBody, &orderRespJSON)
 
-	return result["id"].(string), nil
+	response := map[string]interface{}{
+		"customer_id": customerID,
+		"order_id":    orderRespJSON["id"],
+	}
+
+	return json.Marshal(response)
 }
 
-/* ---------------- CREATE AUTHORIZATION PAYMENT (NEW & REQUIRED) ---------------- */
+/*
+STEP 2:
+Create Authorization Payment (UPI Collect)
+*/
+func (s *Service) CreateAuthorizationPayment(payload string) ([]byte, error) {
 
-func (s *Service) CreateAuthorizationPayment(orderID string) ([]byte, error) {
-	url := "https://api.razorpay.com/v1/payments/create/authorization"
+	var req map[string]interface{}
+	_ = json.Unmarshal([]byte(payload), &req)
 
-	payload := map[string]string{
-		"order_id": orderID,
+	orderID := req["order_id"].(string)
+	amount := int(req["amount"].(float64))
+
+	if orderID == "" {
+		return nil, errors.New("order_id missing")
 	}
 
-	body, _ := json.Marshal(payload)
+	paymentPayload := map[string]interface{}{
+		"amount":   amount, // actual debit amount
+		"currency": "INR",
+		"order_id": orderID,
+		"method":   "upi",
+	}
 
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	req.SetBasicAuth(s.key, s.secret)
-	req.Header.Set("Content-Type", "application/json")
+	body, _ := json.Marshal(paymentPayload)
 
-	resp, err := http.DefaultClient.Do(req)
+	paymentReq, _ := http.NewRequest(
+		"POST",
+		"https://api.razorpay.com/v1/payments/create/recurring",
+		bytes.NewBuffer(body),
+	)
+
+	paymentReq.SetBasicAuth(s.key, s.secret)
+	paymentReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(paymentReq)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +163,7 @@ func (s *Service) CreateAuthorizationPayment(orderID string) ([]byte, error) {
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("authorization error: %s", string(respBody))
+		return nil, errors.New(string(respBody))
 	}
 
 	return respBody, nil
